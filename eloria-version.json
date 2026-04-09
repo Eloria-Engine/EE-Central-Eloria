@@ -1,0 +1,16 @@
+{
+  "born_from": "Eloria Engine",
+  "engine_version": "2.5.0",
+  "born_date": "2026-04-09",
+  "project_id": "EE-Central-Eloria",
+  "project_name": "Eloria Central Hub",
+  "domain": "central.eloria.paris",
+  "purpose": "Hub central del ecosistema Eloria — muestra todos los productos activos y su estado en tiempo real",
+  "knowledge_at_birth": [
+    "standalone-project-structure",
+    "nextjs-app-router",
+    "tailwind-design-system",
+    "supabase-integration",
+    "eloria-branding"
+  ]
+}
