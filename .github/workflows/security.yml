@@ -1,0 +1,153 @@
+# =============================================================================
+# Workflow de Seguridad — Generado desde el motor Eloria Engine
+# Origen: governance/templates/workflow-security.yml
+# Fecha de propagación: 2026-04-19
+# Hijo destino: EE-Central-Eloria
+# =============================================================================
+# Workflow de Seguridad — Eloria Engine (template para hijos)
+# =============================================================================
+# Ubicación destino: .github/workflows/security.yml
+# Mantenedor: Isaac (Eloria Engine)
+#
+# Cubre cinco frentes:
+#   1. npm-audit         → vulnerabilidades de dependencias npm
+#   2. secret-scan       → secretos filtrados en el repo
+#   3. codeql            → análisis estático JS/TS
+#   4. dependency-review → revisión de cambios en deps en cada PR
+#   5. notify-fail       → (opcional) abre issue automático si algo falla
+#
+# Para personalizar en cada hijo, ver README al lado de este archivo.
+# =============================================================================
+
+name: Security
+
+on:
+  # Cada push a main: corre todo menos dependency-review
+  push:
+    branches: [main, master]
+  # Cada PR: corre todo (incluye dependency-review)
+  pull_request:
+    branches: [main, master]
+  # Cron semanal — lunes 00:00 UTC (catch de CVEs nuevos en deps existentes)
+  schedule:
+    - cron: '0 0 * * 1'
+  # Permite disparar manualmente desde la UI de GitHub
+  workflow_dispatch:
+
+# Permisos mínimos por defecto. Cada job los amplía si los necesita.
+permissions:
+  contents: read
+
+# Cancela ejecuciones previas del mismo PR/branch para no gastar minutos.
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. npm-audit — falla si hay vulnerabilidades high o critical
+  # ---------------------------------------------------------------------------
+  npm-audit:
+    name: npm audit (high/critical)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps (sin scripts para velocidad)
+        run: npm ci --ignore-scripts
+
+      - name: Run npm audit (JSON, level=high)
+        run: |
+          set +e
+          npm audit --json --audit-level=high > audit-report.json
+          AUDIT_EXIT=$?
+          echo "npm audit exit code: $AUDIT_EXIT"
+          node -e "const r=require('./audit-report.json'); const m=r.metadata?.vulnerabilities||{}; console.log('Vulnerabilidades:', JSON.stringify(m, null, 2));"
+          exit $AUDIT_EXIT
+
+      - name: Subir reporte como artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: audit-report.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # 2. secret-scan — gitleaks busca secretos filtrados
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (full history para diff completo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true
+
+  # ---------------------------------------------------------------------------
+  # 3. codeql — análisis estático para JavaScript/TypeScript
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
+
+  # ---------------------------------------------------------------------------
+  # 4. dependency-review — solo en pull_request, bloquea deps con CVEs altos
+  # ---------------------------------------------------------------------------
+  dependency-review:
+    name: Dependency review (PR only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
